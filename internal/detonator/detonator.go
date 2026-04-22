@@ -8,6 +8,7 @@ import (
 
 	"detonator/internal/config"
 	"detonator/internal/orchestrator"
+	"detonator/internal/sensor"
 )
 
 // ANSI color codes for terminal output.
@@ -28,16 +29,20 @@ const (
 
 // DetonationResult holds the forensic report from a detonation run.
 type DetonationResult struct {
-	PackageName string        `json:"package_name"`
-	Registry    string        `json:"registry"`
-	ContainerID string        `json:"container_id"`
-	ContainerPID int          `json:"container_pid"`
-	StartTime   time.Time     `json:"start_time"`
-	EndTime     time.Time     `json:"end_time"`
-	Duration    time.Duration `json:"duration"`
-	Logs        string        `json:"logs"`
-	Success     bool          `json:"success"`
-	Error       string        `json:"error,omitempty"`
+	PackageName   string               `json:"package_name"`
+	Registry      string               `json:"registry"`
+	ContainerID   string               `json:"container_id"`
+	ContainerPID  int                  `json:"container_pid"`
+	StartTime     time.Time            `json:"start_time"`
+	EndTime       time.Time            `json:"end_time"`
+	Duration      time.Duration        `json:"duration"`
+	Logs          string               `json:"logs"`
+	SyscallEvents []sensor.SyscallEvent `json:"syscall_events"`
+	ExecveCount   int                  `json:"execve_count"`
+	OpenatCount   int                  `json:"openat_count"`
+	EbpfActive    bool                 `json:"ebpf_active"`
+	Success       bool                 `json:"success"`
+	Error         string               `json:"error,omitempty"`
 }
 
 // step prints a formatted step indicator.
@@ -95,6 +100,48 @@ func printReport(result *DetonationResult) {
 	fmt.Printf("  %sLog Lines:%s     %d\n", Dim, Reset, countLines(result.Logs))
 	fmt.Println()
 
+	// eBPF Syscall Summary
+	if result.EbpfActive && len(result.SyscallEvents) > 0 {
+		fmt.Printf("  %s%seBPF SYSCALL SUMMARY:%s\n", Bold, Cyan, Reset)
+		fmt.Printf("  %s────────────────────────────────────────────────%s\n", Dim, Reset)
+		fmt.Printf("  %s│%s Total Events:  %s%d%s\n", Dim, Reset, Bold+White, len(result.SyscallEvents), Reset)
+		fmt.Printf("  %s│%s EXECVE calls:  %s%d%s\n", Dim, Reset, Bold+Yellow, result.ExecveCount, Reset)
+		fmt.Printf("  %s│%s OPENAT calls:  %s%d%s\n", Dim, Reset, Bold+Yellow, result.OpenatCount, Reset)
+		fmt.Println()
+
+		// Show EXECVE events (commands spawned)
+		execves := filterEvents(result.SyscallEvents, sensor.EventExecve)
+		if len(execves) > 0 {
+			fmt.Printf("  %s│%s %s%sProcesses Spawned:%s\n", Dim, Reset, Bold, Red, Reset)
+			max := 15
+			if len(execves) < max {
+				max = len(execves)
+			}
+			for _, ev := range execves[:max] {
+				fmt.Printf("  %s│%s   PID=%d  %s%s%s → %s\n", Dim, Reset, ev.PID, Bold, ev.ProcessName, Reset, ev.Filename)
+			}
+			if len(execves) > 15 {
+				fmt.Printf("  %s│   ... and %d more%s\n", Dim, len(execves)-15, Reset)
+			}
+			fmt.Println()
+		}
+
+		// Show suspicious file accesses
+		suspicious := filterSuspiciousFiles(result.SyscallEvents)
+		if len(suspicious) > 0 {
+			fmt.Printf("  %s│%s %s%s⚠ Suspicious File Access:%s\n", Dim, Reset, Bold, BgRed+White, Reset)
+			for _, ev := range suspicious {
+				fmt.Printf("  %s│%s   %s%s%s → %s\n", Dim, Reset, Red+Bold, ev.ProcessName, Reset, ev.Filename)
+			}
+			fmt.Println()
+		}
+
+		fmt.Printf("  %s────────────────────────────────────────────────%s\n", Dim, Reset)
+	} else if !result.EbpfActive {
+		fmt.Printf("  %s[eBPF inactive — run as root for kernel-level tracing]%s\n", Dim, Reset)
+	}
+	fmt.Println()
+
 	if result.Logs != "" {
 		fmt.Printf("  %s%sFORENSIC LOG:%s\n", Bold, Magenta, Reset)
 		fmt.Printf("  %s────────────────────────────────────────────────%s\n", Dim, Reset)
@@ -129,7 +176,7 @@ func Run(ctx context.Context, cfg *config.Config) (*DetonationResult, error) {
 
 	printBanner(cfg)
 
-	totalSteps := 6
+	totalSteps := 7
 
 	// Step 1: Connect to Docker
 	step(1, totalSteps, "Connecting to Docker daemon...")
@@ -159,7 +206,7 @@ func Run(ctx context.Context, cfg *config.Config) (*DetonationResult, error) {
 
 	// Step 3: Create detonation chamber
 	step(3, totalSteps, "Creating detonation chamber...")
-	containerID, err := orch.CreateChamber(ctx)
+	containerID, _, err := orch.CreateChamber(ctx)
 	if err != nil {
 		fail(err)
 		result.Error = err.Error()
@@ -168,8 +215,27 @@ func Run(ctx context.Context, cfg *config.Config) (*DetonationResult, error) {
 	result.ContainerID = containerID
 	done()
 
-	// Step 4: Detonate
-	step(4, totalSteps, fmt.Sprintf("Injecting %s%s%s & detonating...", Bold+White, cfg.PackageName, Reset))
+	// Step 4: Attach eBPF sensor (before container starts to avoid race condition)
+	var ebpfSensor *sensor.Sensor
+	var eventCh <-chan sensor.SyscallEvent
+	step(4, totalSteps, "Attaching eBPF kernel sensor...")
+	ebpfSensor, sensorErr := sensor.New()
+	if sensorErr != nil {
+		fmt.Printf("  %s⚠%s  %s%s%s\n", Yellow+Bold, Reset, Dim, sensorErr.Error(), Reset)
+		fmt.Printf("       %s└─ Continuing without kernel tracing (run as root for eBPF)%s\n", Dim, Reset)
+	} else {
+		defer ebpfSensor.Close()
+		result.EbpfActive = true
+		eventCh, err = ebpfSensor.Start(ctx)
+		if err != nil {
+			fmt.Printf("  %s⚠%s  %s%s%s\n", Yellow+Bold, Reset, Dim, err.Error(), Reset)
+		} else {
+			done()
+		}
+	}
+
+	// Step 5: Detonate (start container — eBPF is already watching)
+	step(5, totalSteps, fmt.Sprintf("Injecting %s%s%s & detonating...", Bold+White, cfg.PackageName, Reset))
 	fmt.Println()
 
 	if err := orch.StartContainer(ctx, containerID); err != nil {
@@ -180,16 +246,21 @@ func Run(ctx context.Context, cfg *config.Config) (*DetonationResult, error) {
 		return result, err
 	}
 
-	// Get the container PID for eBPF targeting (Phase 2)
+	// Get the container PID (informational)
 	pid, err := orch.GetContainerPID(ctx, containerID)
 	if err == nil {
 		result.ContainerPID = pid
-		fmt.Printf("       %s└─ Container PID: %d (for eBPF targeting)%s\n", Dim, pid, Reset)
+		fmt.Printf("       %s└─ Container PID: %d%s\n", Dim, pid, Reset)
+	}
+
+	// Activate the kernel-space PID trace filter using the container init PID
+	if ebpfSensor != nil {
+		fmt.Printf("       %s└─ eBPF armed: tracking container init via magic marker%s\n", Dim, Reset)
 	}
 
 	fmt.Printf("       %s└─ %s %s", Dim, cfg.InstallCommand(), Reset)
 
-	// Countdown timer
+	// Countdown timer — also collect eBPF events during the detonation window
 	timeout := cfg.DetonationTimeout
 	ticker := time.NewTicker(1 * time.Second)
 	defer ticker.Stop()
@@ -200,7 +271,18 @@ func Run(ctx context.Context, cfg *config.Config) (*DetonationResult, error) {
 		case <-ticker.C:
 			elapsed += time.Second
 			remaining := timeout - elapsed
-			fmt.Printf("\r       %s└─ ⏱  Detonation window: %s remaining   %s", Yellow, remaining, Reset)
+			evtCount := len(result.SyscallEvents)
+			fmt.Printf("\r       %s└─ ⏱  Detonation window: %s remaining  [%d syscalls captured]   %s", Yellow, remaining, evtCount, Reset)
+		case ev, ok := <-eventCh:
+			if ok {
+				result.SyscallEvents = append(result.SyscallEvents, ev)
+				switch ev.EventType {
+				case sensor.EventExecve:
+					result.ExecveCount++
+				case sensor.EventOpenat:
+					result.OpenatCount++
+				}
+			}
 		case <-ctx.Done():
 			fmt.Println()
 			result.Error = "context cancelled"
@@ -208,10 +290,10 @@ func Run(ctx context.Context, cfg *config.Config) (*DetonationResult, error) {
 			return result, ctx.Err()
 		}
 	}
-	fmt.Printf("\r       %s└─ ⏱  Detonation window: %sCOMPLETE%s              \n", Yellow, Green+Bold, Reset)
+	fmt.Printf("\r       %s└─ ⏱  Detonation window: %sCOMPLETE%s  [%d syscalls captured]        \n", Yellow, Green+Bold, Reset, len(result.SyscallEvents))
 
-	// Step 5: Capture logs
-	step(5, totalSteps, "Capturing forensic logs...")
+	// Step 6: Capture logs
+	step(6, totalSteps, "Capturing forensic logs...")
 	logs, err := orch.GetLogs(ctx, containerID)
 	if err != nil {
 		fail(err)
@@ -222,8 +304,8 @@ func Run(ctx context.Context, cfg *config.Config) (*DetonationResult, error) {
 		done()
 	}
 
-	// Step 6: Kill container
-	step(6, totalSteps, "Destroying detonation chamber...")
+	// Step 7: Kill container
+	step(7, totalSteps, "Destroying detonation chamber...")
 	if err := orch.Kill(ctx, containerID); err != nil {
 		fail(err)
 		result.Error = err.Error()
@@ -257,4 +339,47 @@ func stripDockerHeader(line string) string {
 		}
 	}
 	return line
+}
+
+// filterEvents returns only events matching the given type.
+func filterEvents(events []sensor.SyscallEvent, eventType sensor.EventType) []sensor.SyscallEvent {
+	var filtered []sensor.SyscallEvent
+	for _, ev := range events {
+		if ev.EventType == eventType {
+			filtered = append(filtered, ev)
+		}
+	}
+	return filtered
+}
+
+// suspiciousPatterns defines file paths that are red flags during package installation.
+var suspiciousPatterns = []string{
+	".ssh/",
+	"/etc/shadow",
+	"/etc/passwd",
+	"/etc/crontab",
+	"/proc/self/environ",
+	"/proc/self/maps",
+	"/.aws/",
+	"/.gnupg/",
+	"/.npmrc",
+	"/.bash_history",
+	"/etc/hosts",
+}
+
+// filterSuspiciousFiles returns events that access known-sensitive file paths.
+func filterSuspiciousFiles(events []sensor.SyscallEvent) []sensor.SyscallEvent {
+	var suspicious []sensor.SyscallEvent
+	for _, ev := range events {
+		if ev.EventType != sensor.EventOpenat {
+			continue
+		}
+		for _, pattern := range suspiciousPatterns {
+			if strings.Contains(ev.Filename, pattern) {
+				suspicious = append(suspicious, ev)
+				break
+			}
+		}
+	}
+	return suspicious
 }

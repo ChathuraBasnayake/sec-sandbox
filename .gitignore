@@ -5,15 +5,14 @@
 *.so
 *.dylib
 /detonator
+*.o               # Ignore intermediate eBPF objects
 
 # Test binary, built with `go test -c`
 *.test
 
-# Output of the go coverage tool, specifically when used with LiteIDE
+# Output of the go coverage tool, and trace logs
 *.out
-
-# Dependency directories (remove the comment below to include it)
-# vendor/
+trace.out
 
 # Go workspace file
 go.work
@@ -39,15 +38,12 @@ go.work.sum
 ehthumbs.db
 Thumbs.db
 
-# Node.js (if any parts of the sandbox use it)
+# Node.js
 node_modules/
 npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-.pnpm-debug.log*
 
-# Docker
-.docker/
+# Generated eBPF headers (machine-specific, regenerate with bpftool)
+ebpf/headers/vmlinux.h
 
 # AI Documentation
 ai-docs/

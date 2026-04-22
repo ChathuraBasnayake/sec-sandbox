@@ -53,8 +53,8 @@ func (o *Orchestrator) PullImage(ctx context.Context) error {
 }
 
 // CreateChamber creates an isolated container configured for detonation.
-// Returns the container ID.
-func (o *Orchestrator) CreateChamber(ctx context.Context) (string, error) {
+// Returns the container ID and the container Name.
+func (o *Orchestrator) CreateChamber(ctx context.Context) (string, string, error) {
 	installCmd := o.cfg.InstallCommand()
 	memBytes := o.cfg.MemoryLimitMB * 1024 * 1024
 	containerName := fmt.Sprintf("detonator-%s-%d", sanitizeName(o.cfg.PackageName), time.Now().Unix())
@@ -62,7 +62,9 @@ func (o *Orchestrator) CreateChamber(ctx context.Context) (string, error) {
 	result, err := o.docker.ContainerCreate(ctx, client.ContainerCreateOptions{
 		Config: &container.Config{
 			Image: o.cfg.Image(),
-			Cmd:   []string{"sh", "-c", installCmd + " 2>&1; echo '--- INSTALL COMPLETE ---'; sleep 86400"},
+			// The container init shell will copy and execute /tmp/DT_INIT. Our BPF tracepoint intercepts this
+			// execution to discover its exact host/kernel PID and securely tracks it.
+			Cmd:   []string{"sh", "-c", fmt.Sprintf("cp /bin/true /tmp/DT_INIT && /tmp/DT_INIT; %s 2>&1; echo '--- INSTALL COMPLETE ---'; sleep 86400", installCmd)},
 			Tty:   false,
 			Labels: map[string]string{
 				"detonator.package":  o.cfg.PackageName,
@@ -82,10 +84,10 @@ func (o *Orchestrator) CreateChamber(ctx context.Context) (string, error) {
 		Name:             containerName,
 	})
 	if err != nil {
-		return "", fmt.Errorf("container create failed: %w", err)
+		return "", "", fmt.Errorf("container create failed: %w", err)
 	}
 
-	return result.ID, nil
+	return result.ID, containerName, nil
 }
 
 // StartContainer starts the detonation container.

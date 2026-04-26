@@ -25,6 +25,8 @@ class Category(str, Enum):
     REVERSE_SHELL = "reverse_shell"
     RECON = "recon"
     PERSISTENCE = "persistence"
+    NETWORK = "network"
+    ANTI_FORENSICS = "anti_forensics"
     SUSPICIOUS_ACTIVITY = "suspicious_activity"
 
 
@@ -49,6 +51,9 @@ class ThreatVerdict(BaseModel):
     events_analyzed: int = 0
     execve_count: int = 0
     openat_count: int = 0
+    connect_count: int = 0
+    write_count: int = 0
+    unlink_count: int = 0
 
 
 class SyscallEvent(BaseModel):
@@ -59,7 +64,11 @@ class SyscallEvent(BaseModel):
     pid: int
     ppid: int
     timestamp_ns: int
-    event_type: str  # "EXECVE" or "OPENAT"
+    event_type: str  # "EXECVE", "OPENAT", "CONNECT", "WRITE", "UNLINK"
     process_name: str
-    filename: str
-    captured_at: str
+    filename: str = ""
+    captured_at: str = ""
+    connect_port: int = 0
+    connect_ip: int = 0
+    write_bytes: int = 0
+    write_fd: int = 0

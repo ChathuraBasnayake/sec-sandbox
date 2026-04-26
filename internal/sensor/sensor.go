@@ -18,8 +18,11 @@ import (
 type EventType uint32
 
 const (
-	EventExecve EventType = 1
-	EventOpenat EventType = 2
+	EventExecve  EventType = 1
+	EventOpenat  EventType = 2
+	EventConnect EventType = 3
+	EventWrite   EventType = 4
+	EventUnlink  EventType = 5
 )
 
 // String returns a human-readable name for the event type.
@@ -29,6 +32,12 @@ func (e EventType) String() string {
 		return "EXECVE"
 	case EventOpenat:
 		return "OPENAT"
+	case EventConnect:
+		return "CONNECT"
+	case EventWrite:
+		return "WRITE"
+	case EventUnlink:
+		return "UNLINK"
 	default:
 		return "UNKNOWN"
 	}
@@ -42,18 +51,25 @@ type SyscallEvent struct {
 	EventType   EventType `json:"event_type"`
 	ProcessName string    `json:"process_name"`
 	Filename    string    `json:"filename"`
+	ConnectPort uint32    `json:"connect_port,omitempty"`
+	ConnectIP   uint32    `json:"connect_ip,omitempty"`
+	WriteBytes  uint64    `json:"write_bytes,omitempty"`
+	WriteFD     int32     `json:"write_fd,omitempty"`
 }
 
 // Sensor manages the eBPF lifecycle: loading probes, attaching to tracepoints,
 // and reading events from the ring buffer.
 type Sensor struct {
-	objs     probeObjects
-	tpExecve link.Link
-	tpOpenat link.Link
-	tpOpen   link.Link
-	tpFork   link.Link
-	reader      *ringbuf.Reader
-	mu          sync.Mutex
+	objs       probeObjects
+	tpExecve   link.Link
+	tpOpenat   link.Link
+	tpOpen     link.Link
+	tpFork     link.Link
+	tpConnect  link.Link
+	tpWrite    link.Link
+	tpUnlinkat link.Link
+	reader     *ringbuf.Reader
+	mu         sync.Mutex
 }
 
 // New creates and initializes a new eBPF sensor.
@@ -107,9 +123,48 @@ func New() (*Sensor, error) {
 		return nil, fmt.Errorf("attaching open tracepoint: %w", err)
 	}
 
+	// Attach to tracepoint: sys_enter_connect
+	tpConnect, err := link.Tracepoint("syscalls", "sys_enter_connect", objs.HandleConnect, nil)
+	if err != nil {
+		tpOpen.Close()
+		tpFork.Close()
+		tpOpenat.Close()
+		tpExecve.Close()
+		objs.Close()
+		return nil, fmt.Errorf("attaching connect tracepoint: %w", err)
+	}
+
+	// Attach to tracepoint: sys_enter_write
+	tpWrite, err := link.Tracepoint("syscalls", "sys_enter_write", objs.HandleWrite, nil)
+	if err != nil {
+		tpConnect.Close()
+		tpOpen.Close()
+		tpFork.Close()
+		tpOpenat.Close()
+		tpExecve.Close()
+		objs.Close()
+		return nil, fmt.Errorf("attaching write tracepoint: %w", err)
+	}
+
+	// Attach to tracepoint: sys_enter_unlinkat
+	tpUnlinkat, err := link.Tracepoint("syscalls", "sys_enter_unlinkat", objs.HandleUnlinkat, nil)
+	if err != nil {
+		tpWrite.Close()
+		tpConnect.Close()
+		tpOpen.Close()
+		tpFork.Close()
+		tpOpenat.Close()
+		tpExecve.Close()
+		objs.Close()
+		return nil, fmt.Errorf("attaching unlinkat tracepoint: %w", err)
+	}
+
 	// Open the ring buffer reader.
 	reader, err := ringbuf.NewReader(objs.Events)
 	if err != nil {
+		tpUnlinkat.Close()
+		tpWrite.Close()
+		tpConnect.Close()
 		tpOpen.Close()
 		tpFork.Close()
 		tpOpenat.Close()
@@ -119,12 +174,15 @@ func New() (*Sensor, error) {
 	}
 
 	return &Sensor{
-		objs:     objs,
-		tpExecve: tpExecve,
-		tpOpenat: tpOpenat,
-		tpOpen:   tpOpen,
-		tpFork:   tpFork,
-		reader:   reader,
+		objs:       objs,
+		tpExecve:   tpExecve,
+		tpOpenat:   tpOpenat,
+		tpOpen:     tpOpen,
+		tpFork:     tpFork,
+		tpConnect:  tpConnect,
+		tpWrite:    tpWrite,
+		tpUnlinkat: tpUnlinkat,
+		reader:     reader,
 	}, nil
 }
 
@@ -165,6 +223,10 @@ func (s *Sensor) Start(ctx context.Context) (<-chan SyscallEvent, error) {
 				EventType:   EventType(raw.EventType),
 				ProcessName: int8SliceToString(raw.Comm[:]),
 				Filename:    int8SliceToString(raw.Filename[:]),
+				ConnectPort: raw.ConnectPort,
+				ConnectIP:   raw.ConnectIp,
+				WriteBytes:  raw.WriteBytes,
+				WriteFD:     raw.WriteFd,
 			}
 
 			// Since we use sched_process_fork to track child processes,
@@ -213,6 +275,15 @@ func (s *Sensor) Close() {
 	}
 	if s.tpFork != nil {
 		s.tpFork.Close()
+	}
+	if s.tpConnect != nil {
+		s.tpConnect.Close()
+	}
+	if s.tpWrite != nil {
+		s.tpWrite.Close()
+	}
+	if s.tpUnlinkat != nil {
+		s.tpUnlinkat.Close()
 	}
 	s.objs.Close()
 }

@@ -41,6 +41,9 @@ type DetonationResult struct {
 	SyscallEvents []sensor.SyscallEvent `json:"syscall_events"`
 	ExecveCount   int                  `json:"execve_count"`
 	OpenatCount   int                  `json:"openat_count"`
+	ConnectCount  int                  `json:"connect_count"`
+	WriteCount    int                  `json:"write_count"`
+	UnlinkCount   int                  `json:"unlink_count"`
 	EbpfActive    bool                 `json:"ebpf_active"`
 	Success       bool                 `json:"success"`
 	Error         string               `json:"error,omitempty"`
@@ -112,6 +115,9 @@ func printReport(result *DetonationResult) {
 		fmt.Printf("  %s│%s Total Events:  %s%d%s\n", Dim, Reset, Bold+White, len(result.SyscallEvents), Reset)
 		fmt.Printf("  %s│%s EXECVE calls:  %s%d%s\n", Dim, Reset, Bold+Yellow, result.ExecveCount, Reset)
 		fmt.Printf("  %s│%s OPENAT calls:  %s%d%s\n", Dim, Reset, Bold+Yellow, result.OpenatCount, Reset)
+		fmt.Printf("  %s│%s CONNECT calls: %s%d%s\n", Dim, Reset, Bold+Yellow, result.ConnectCount, Reset)
+		fmt.Printf("  %s│%s WRITE calls:   %s%d%s\n", Dim, Reset, Bold+Yellow, result.WriteCount, Reset)
+		fmt.Printf("  %s│%s UNLINK calls:  %s%d%s\n", Dim, Reset, Bold+Yellow, result.UnlinkCount, Reset)
 		fmt.Println()
 
 		// Show EXECVE events (commands spawned)
@@ -127,6 +133,29 @@ func printReport(result *DetonationResult) {
 			}
 			if len(execves) > 15 {
 				fmt.Printf("  %s│   ... and %d more%s\n", Dim, len(execves)-15, Reset)
+			}
+			fmt.Println()
+		}
+
+		// Show CONNECT events (outbound network connections)
+		connects := filterEvents(result.SyscallEvents, sensor.EventConnect)
+		if len(connects) > 0 {
+			fmt.Printf("  %s│%s %s%s🌐 Outbound Connections:%s\n", Dim, Reset, Bold, Red, Reset)
+			for _, ev := range connects {
+				ip := formatIP(ev.ConnectIP)
+				fmt.Printf("  %s│%s   %s%s%s → %s:%d\n", Dim, Reset, Red+Bold, ev.ProcessName, Reset, ip, ev.ConnectPort)
+			}
+			fmt.Println()
+		}
+
+		// Show UNLINK events (file deletions)
+		unlinks := filterEvents(result.SyscallEvents, sensor.EventUnlink)
+		if len(unlinks) > 0 {
+			fmt.Printf("  %s│%s %s%s🗑  File Deletions:%s\n", Dim, Reset, Bold, Red, Reset)
+			for _, ev := range unlinks {
+				if ev.Filename != "" {
+					fmt.Printf("  %s│%s   %s%s%s deleted %s\n", Dim, Reset, Red+Bold, ev.ProcessName, Reset, ev.Filename)
+				}
 			}
 			fmt.Println()
 		}
@@ -306,6 +335,12 @@ func Run(ctx context.Context, cfg *config.Config) (*DetonationResult, error) {
 					result.ExecveCount++
 				case sensor.EventOpenat:
 					result.OpenatCount++
+				case sensor.EventConnect:
+					result.ConnectCount++
+				case sensor.EventWrite:
+					result.WriteCount++
+				case sensor.EventUnlink:
+					result.UnlinkCount++
 				}
 				// Stream to Kafka in real-time
 				if kafkaProducer != nil {
@@ -378,6 +413,11 @@ func stripDockerHeader(line string) string {
 		}
 	}
 	return line
+}
+
+// formatIP converts a uint32 IPv4 address (network byte order) to dotted string.
+func formatIP(ip uint32) string {
+	return fmt.Sprintf("%d.%d.%d.%d", ip&0xFF, (ip>>8)&0xFF, (ip>>16)&0xFF, (ip>>24)&0xFF)
 }
 
 // filterEvents returns only events matching the given type.

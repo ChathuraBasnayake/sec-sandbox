@@ -72,7 +72,11 @@ def analyze(events: list[SyscallEvent], package_name: str, detonation_id: str) -
     
     execve_count = 0
     openat_count = 0
+    connect_count = 0
+    write_count = 0
+    unlink_count = 0
     suspicious_execs: set[str] = set()
+    suspicious_connects: list[tuple[str, str, int]] = []  # (process, ip, port)
     
     for event in events:
         if event.event_type == "EXECVE":
@@ -121,6 +125,35 @@ def analyze(events: list[SyscallEvent], package_name: str, detonation_id: str) -
                             evidence=f"openat: {event.process_name} → {filename} (PID={event.pid})",
                         ))
     
+        elif event.event_type == "CONNECT":
+            connect_count += 1
+            ip_int = event.connect_ip
+            ip_str = f"{ip_int & 0xFF}.{(ip_int >> 8) & 0xFF}.{(ip_int >> 16) & 0xFF}.{(ip_int >> 24) & 0xFF}"
+            port = event.connect_port
+            proc = event.process_name.strip()
+            
+            # Skip local/internal connections (127.x.x.x, 0.0.0.0)
+            if not ip_str.startswith("127.") and ip_str != "0.0.0.0":
+                suspicious_connects.append((proc, ip_str, port))
+        
+        elif event.event_type == "WRITE":
+            write_count += 1
+        
+        elif event.event_type == "UNLINK":
+            unlink_count += 1
+            filename = event.filename.strip()
+            if filename:
+                key = f"unlink:{filename}"
+                if key not in seen_findings:
+                    seen_findings.add(key)
+                    score += 15
+                    findings.append(Finding(
+                        severity=Severity.HIGH,
+                        category=Category.ANTI_FORENSICS,
+                        description=f"Deleted file: {filename}",
+                        evidence=f"unlinkat: {event.process_name} deleted {filename} (PID={event.pid})",
+                    ))
+    
     # Bonus: excessive exec calls indicate scripted attack behavior
     expected_execs = 6  # sh, npm, node, mkdir, sleep, DT_INIT
     if execve_count > expected_execs + 5:
@@ -133,6 +166,21 @@ def analyze(events: list[SyscallEvent], package_name: str, detonation_id: str) -
             description=f"Unusually high process spawning: {execve_count} execve calls ({extra} more than expected)",
             evidence=f"Non-standard processes: {', '.join(sorted(suspicious_execs)) or 'none identified'}",
         ))
+    
+    # Score suspicious outbound connections
+    if suspicious_connects:
+        unique_ips = set((ip, port) for _, ip, port in suspicious_connects)
+        for ip, port in unique_ips:
+            # npm registry IPs are expected (104.16.x.x = Cloudflare/npm)
+            if ip.startswith("104.16."):
+                continue  # Known npm CDN
+            score += 20
+            findings.append(Finding(
+                severity=Severity.HIGH,
+                category=Category.NETWORK,
+                description=f"Outbound connection to {ip}:{port}",
+                evidence=f"connect: → {ip}:{port}",
+            ))
     
     # Cap score at 100
     score = min(score, 100)
@@ -163,6 +211,9 @@ def analyze(events: list[SyscallEvent], package_name: str, detonation_id: str) -
         events_analyzed=len(events),
         execve_count=execve_count,
         openat_count=openat_count,
+        connect_count=connect_count,
+        write_count=write_count,
+        unlink_count=unlink_count,
     )
 
 

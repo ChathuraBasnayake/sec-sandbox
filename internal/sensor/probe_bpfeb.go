@@ -21,6 +21,11 @@ type probeEvent struct {
 	EventType   uint32
 	Comm        [16]int8
 	Filename    [256]int8
+	ConnectPort uint32
+	ConnectIp   uint32
+	_           [4]byte
+	WriteBytes  uint64
+	WriteFd     int32
 	_           [4]byte
 }
 
@@ -66,10 +71,13 @@ type probeSpecs struct {
 //
 // It can be passed ebpf.CollectionSpec.Assign.
 type probeProgramSpecs struct {
+	HandleConnect     *ebpf.ProgramSpec `ebpf:"handle_connect"`
 	HandleExecve      *ebpf.ProgramSpec `ebpf:"handle_execve"`
 	HandleOpen        *ebpf.ProgramSpec `ebpf:"handle_open"`
 	HandleOpenat      *ebpf.ProgramSpec `ebpf:"handle_openat"`
 	HandleProcessFork *ebpf.ProgramSpec `ebpf:"handle_process_fork"`
+	HandleUnlinkat    *ebpf.ProgramSpec `ebpf:"handle_unlinkat"`
+	HandleWrite       *ebpf.ProgramSpec `ebpf:"handle_write"`
 }
 
 // probeMapSpecs contains maps before they are loaded into the kernel.
@@ -129,18 +137,24 @@ type probeVariables struct {
 //
 // It can be passed to loadProbeObjects or ebpf.CollectionSpec.LoadAndAssign.
 type probePrograms struct {
+	HandleConnect     *ebpf.Program `ebpf:"handle_connect"`
 	HandleExecve      *ebpf.Program `ebpf:"handle_execve"`
 	HandleOpen        *ebpf.Program `ebpf:"handle_open"`
 	HandleOpenat      *ebpf.Program `ebpf:"handle_openat"`
 	HandleProcessFork *ebpf.Program `ebpf:"handle_process_fork"`
+	HandleUnlinkat    *ebpf.Program `ebpf:"handle_unlinkat"`
+	HandleWrite       *ebpf.Program `ebpf:"handle_write"`
 }
 
 func (p *probePrograms) Close() error {
 	return _ProbeClose(
+		p.HandleConnect,
 		p.HandleExecve,
 		p.HandleOpen,
 		p.HandleOpenat,
 		p.HandleProcessFork,
+		p.HandleUnlinkat,
+		p.HandleWrite,
 	)
 }
 

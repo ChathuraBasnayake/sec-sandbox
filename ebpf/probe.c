@@ -17,8 +17,11 @@
 #include <bpf/bpf_core_read.h>
 
 // Event types
-#define EVENT_EXECVE 1
-#define EVENT_OPENAT 2
+#define EVENT_EXECVE  1
+#define EVENT_OPENAT  2
+#define EVENT_CONNECT 3
+#define EVENT_WRITE   4
+#define EVENT_UNLINK  5
 
 // Max filename length we capture
 #define MAX_FILENAME_LEN 256
@@ -29,9 +32,13 @@ struct event {
     __u32 pid;                        // Process ID (host PID)
     __u32 ppid;                       // Parent Process ID
     __u64 timestamp_ns;               // Kernel timestamp (nanoseconds)
-    __u32 event_type;                 // EVENT_EXECVE or EVENT_OPENAT
+    __u32 event_type;                 // EVENT_EXECVE, EVENT_OPENAT, EVENT_CONNECT, EVENT_WRITE, EVENT_UNLINK
     char  comm[TASK_COMM_LEN];        // Process name (e.g., "node", "sh")
-    char  filename[MAX_FILENAME_LEN]; // File being opened/executed
+    char  filename[MAX_FILENAME_LEN]; // File being opened/executed (or IP for connect)
+    __u32 connect_port;               // Destination port (EVENT_CONNECT only)
+    __u32 connect_ip;                 // Destination IPv4 addr (EVENT_CONNECT only)
+    __u64 write_bytes;                // Number of bytes written (EVENT_WRITE only)
+    __s32 write_fd;                   // File descriptor (EVENT_WRITE only)
 };
 
 // Ring buffer map — 16MB, shared between both tracepoints.
@@ -180,6 +187,117 @@ int handle_open(struct trace_event_raw_sys_enter *ctx) {
 
     // open args: args[0] = filename
     const char *filename_ptr = (const char *)ctx->args[0];
+    bpf_probe_read_user_str(&e->filename, sizeof(e->filename), filename_ptr);
+
+    bpf_ringbuf_submit(e, 0);
+    return 0;
+}
+
+// ────────────────────────────────────────────────────────────────────
+// Tracepoint: sys_enter_connect
+// Fires when a process connects to a remote socket — catches C2 callbacks,
+// data exfiltration, DNS resolution attempts.
+// ────────────────────────────────────────────────────────────────────
+SEC("tracepoint/syscalls/sys_enter_connect")
+int handle_connect(struct trace_event_raw_sys_enter *ctx) {
+    if (!is_target_process())
+        return 0;
+
+    // connect args: args[1] = struct sockaddr __user *uservaddr
+    //               args[2] = int addrlen
+    struct sockaddr_in sa = {};
+    const void *addr_ptr = (const void *)ctx->args[1];
+    int addrlen = (int)ctx->args[2];
+
+    // Only capture IPv4 connections (sa_family == AF_INET == 2)
+    if (addrlen < (int)sizeof(struct sockaddr_in))
+        return 0;
+
+    bpf_probe_read_user(&sa, sizeof(sa), addr_ptr);
+    if (sa.sin_family != 2) // AF_INET
+        return 0;
+
+    struct event *e = bpf_ringbuf_reserve(&events, sizeof(struct event), 0);
+    if (!e)
+        return 0;
+
+    fill_event_common(e, EVENT_CONNECT);
+    e->connect_ip = sa.sin_addr.s_addr;        // Network byte order
+    e->connect_port = __builtin_bswap16(sa.sin_port); // Convert to host byte order
+
+    // Format IP as string in filename for easy display
+    unsigned char *ip = (unsigned char *)&sa.sin_addr.s_addr;
+    // We can't use snprintf in BPF, so store raw IP — Go will format it
+    e->filename[0] = ip[0];
+    e->filename[1] = '.';
+    e->filename[2] = ip[1];
+    e->filename[3] = '.';
+    e->filename[4] = ip[2];
+    e->filename[5] = '.';
+    e->filename[6] = ip[3];
+    e->filename[7] = 0;
+
+    bpf_ringbuf_submit(e, 0);
+    return 0;
+}
+
+// ────────────────────────────────────────────────────────────────────
+// Tracepoint: sys_enter_write
+// Fires when a process writes data. We only emit events for writes to
+// file descriptors > 2 (skip stdin/stdout/stderr) to reduce noise.
+// ────────────────────────────────────────────────────────────────────
+SEC("tracepoint/syscalls/sys_enter_write")
+int handle_write(struct trace_event_raw_sys_enter *ctx) {
+    if (!is_target_process())
+        return 0;
+
+    // write args: args[0] = fd, args[1] = buf, args[2] = count
+    int fd = (int)ctx->args[0];
+    __u64 count = (__u64)ctx->args[2];
+
+    // Skip stdout(1), stderr(2) — too noisy
+    if (fd <= 2)
+        return 0;
+
+    // Only capture "interesting" writes (> 0 bytes)
+    if (count == 0)
+        return 0;
+
+    struct event *e = bpf_ringbuf_reserve(&events, sizeof(struct event), 0);
+    if (!e)
+        return 0;
+
+    fill_event_common(e, EVENT_WRITE);
+    e->write_fd = fd;
+    e->write_bytes = count;
+
+    // Read the path from /proc/self/fd/N via the task's file descriptor table
+    // This is expensive in BPF so we just record the fd number.
+    // The Go userspace can resolve fd -> path if needed.
+    e->filename[0] = 0; // Will be filled by Go if needed
+
+    bpf_ringbuf_submit(e, 0);
+    return 0;
+}
+
+// ────────────────────────────────────────────────────────────────────
+// Tracepoint: sys_enter_unlinkat
+// Fires when a process deletes a file. Catches anti-forensics behavior
+// (deleting payload after execution, clearing logs).
+// ────────────────────────────────────────────────────────────────────
+SEC("tracepoint/syscalls/sys_enter_unlinkat")
+int handle_unlinkat(struct trace_event_raw_sys_enter *ctx) {
+    if (!is_target_process())
+        return 0;
+
+    struct event *e = bpf_ringbuf_reserve(&events, sizeof(struct event), 0);
+    if (!e)
+        return 0;
+
+    fill_event_common(e, EVENT_UNLINK);
+
+    // unlinkat args: args[1] = const char __user *pathname
+    const char *filename_ptr = (const char *)ctx->args[1];
     bpf_probe_read_user_str(&e->filename, sizeof(e->filename), filename_ptr);
 
     bpf_ringbuf_submit(e, 0);

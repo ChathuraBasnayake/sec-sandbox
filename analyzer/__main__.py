@@ -86,7 +86,7 @@ def print_verdict(verdict: ThreatVerdict):
     print(f"  {BOLD}Package:{RESET}       {WHITE}{BOLD}{verdict.package_name}{RESET}")
     print(f"  {BOLD}Detonation:{RESET}    {DIM}{verdict.detonation_id}{RESET}")
     print(f"  {BOLD}Method:{RESET}        {DIM}{verdict.analysis_method}{RESET}")
-    print(f"  {BOLD}Events:{RESET}        {verdict.events_analyzed} total ({verdict.execve_count} EXECVE, {verdict.openat_count} OPENAT)")
+    print(f"  {BOLD}Events:{RESET}        {verdict.events_analyzed} total ({verdict.execve_count} EXECVE, {verdict.openat_count} OPENAT, {verdict.connect_count} CONNECT, {verdict.write_count} WRITE, {verdict.unlink_count} UNLINK)")
     print()
     print(f"  {BOLD}Threat Score:{RESET}  {bar}")
     print(f"  {BOLD}Risk Level:{RESET}    {badge}")

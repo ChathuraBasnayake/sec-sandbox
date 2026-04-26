@@ -4,14 +4,25 @@
 *.dll
 *.so
 *.dylib
-/detonator
-*.o               # Ignore intermediate eBPF objects
 
-# Test binary, built with `go test -c`
+# Compiled Go binary for this project
+/detonator
+
+# Test binaries, built with `go test -c`
 *.test
 
-# Output of the go coverage tool, and trace logs
+# Output of the go coverage tool
 *.out
+
+# Debug/scratch binaries from development
+/ebpf_test
+/test_pid_finder
+test_pid_finder.go
+test_pid_match.c
+test_pid_match.go
+trace.go
+trace.sh
+test_trace.sh
 trace.out
 
 # Go workspace file
@@ -44,6 +55,16 @@ npm-debug.log*
 
 # Generated eBPF headers (machine-specific, regenerate with bpftool)
 ebpf/headers/vmlinux.h
+
+# Generated eBPF compiled objects (regenerate with go generate)
+internal/sensor/probe_bpfeb.o
+internal/sensor/probe_bpfel.o
+
+# Test package tarballs (regenerate with npm pack or tar)
+test-packages/**/*.tgz
+
+# Kafka data volumes
+infra/kafka_data/
 
 # AI Documentation
 ai-docs/

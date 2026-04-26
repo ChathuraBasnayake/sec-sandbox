@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -64,7 +66,12 @@ func (o *Orchestrator) CreateChamber(ctx context.Context) (string, string, error
 			Image: o.cfg.Image(),
 			// The container init shell will copy and execute /tmp/DT_INIT. Our BPF tracepoint intercepts this
 			// execution to discover its exact host/kernel PID and securely tracks it.
-			Cmd:   []string{"sh", "-c", fmt.Sprintf("cp /bin/true /tmp/DT_INIT && /tmp/DT_INIT; %s 2>&1; echo '--- INSTALL COMPLETE ---'; sleep 86400", installCmd)},
+			// We create a clean /app directory with a minimal package.json to avoid npm's "idealTree" error.
+			Cmd: []string{"sh", "-c", fmt.Sprintf(
+				"cp /bin/true /tmp/DT_INIT && /tmp/DT_INIT; "+
+					"mkdir -p /app && cd /app && echo '{\"name\":\"sandbox\"}' > package.json && "+
+					"%s 2>&1; echo '--- INSTALL COMPLETE ---'; sleep 86400",
+				installCmd)},
 			Tty:   false,
 			Labels: map[string]string{
 				"detonator.package":  o.cfg.PackageName,
@@ -72,14 +79,22 @@ func (o *Orchestrator) CreateChamber(ctx context.Context) (string, string, error
 				"detonator.managed":  "true",
 			},
 		},
-		HostConfig: &container.HostConfig{
-			NetworkMode: "none", // NO network access
-			Resources: container.Resources{
-				Memory:    memBytes,
-				PidsLimit: &o.cfg.PidsLimit,
-			},
-			AutoRemove: false, // Keep alive so we can grab logs before killing
-		},
+		HostConfig: func() *container.HostConfig {
+			hc := &container.HostConfig{
+				NetworkMode: "none", // NO network access
+				Resources: container.Resources{
+					Memory:    memBytes,
+					PidsLimit: &o.cfg.PidsLimit,
+				},
+				AutoRemove: false, // Keep alive so we can grab logs before killing
+			}
+			// If a local package tarball is specified, mount it into the container
+			if o.cfg.LocalPackage != "" {
+				absPath, _ := filepath.Abs(o.cfg.LocalPackage)
+				hc.Binds = []string{absPath + ":/pkg/package.tgz:ro"}
+			}
+			return hc
+		}(),
 		NetworkingConfig: &network.NetworkingConfig{},
 		Name:             containerName,
 	})
@@ -139,7 +154,14 @@ func (o *Orchestrator) Kill(ctx context.Context, containerID string) error {
 }
 
 // sanitizeName cleans a package name for use in container naming.
+// Docker container names only allow [a-zA-Z0-9_.-]
 func sanitizeName(name string) string {
-	r := strings.NewReplacer("/", "-", "@", "", ".", "-")
-	return r.Replace(name)
+	reg := regexp.MustCompile(`[^a-zA-Z0-9_.-]`)
+	sanitized := reg.ReplaceAllString(name, "-")
+	// Trim leading hyphens (Docker requires [a-zA-Z0-9] as first char)
+	sanitized = strings.TrimLeft(sanitized, "-_.")
+	if sanitized == "" {
+		sanitized = "pkg"
+	}
+	return sanitized
 }

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"detonator/internal/config"
+	"detonator/internal/kafka"
 	"detonator/internal/orchestrator"
 	"detonator/internal/sensor"
 )
@@ -258,6 +259,26 @@ func Run(ctx context.Context, cfg *config.Config) (*DetonationResult, error) {
 		fmt.Printf("       %s└─ eBPF armed: tracking container init via magic marker%s\n", Dim, Reset)
 	}
 
+	// Initialize Kafka producer (if broker is configured)
+	var kafkaProducer *kafka.Producer
+	if cfg.KafkaBroker != "" {
+		var kafkaErr error
+		kafkaProducer, kafkaErr = kafka.NewProducer(cfg.KafkaBroker, cfg.KafkaTopic, cfg.PackageName)
+		if kafkaErr != nil {
+			fmt.Printf("       %s└─ ⚠ Kafka unavailable: %s (continuing without streaming)%s\n", Dim, kafkaErr.Error(), Reset)
+			kafkaProducer = nil
+		} else {
+			kafkaProducer.SetContainerID(containerID)
+			defer func() {
+				if err := kafkaProducer.Close(); err != nil {
+					fmt.Printf("       %s└─ ⚠ Kafka producer close error: %s%s\n", Dim, err.Error(), Reset)
+				}
+			}()
+			fmt.Printf("       %s└─ Kafka: streaming to %s topic '%s' [%s]%s\n",
+				Dim, cfg.KafkaBroker, cfg.KafkaTopic, kafkaProducer.DetonationID(), Reset)
+		}
+	}
+
 	fmt.Printf("       %s└─ %s %s", Dim, cfg.InstallCommand(), Reset)
 
 	// Countdown timer — also collect eBPF events during the detonation window
@@ -282,6 +303,15 @@ func Run(ctx context.Context, cfg *config.Config) (*DetonationResult, error) {
 				case sensor.EventOpenat:
 					result.OpenatCount++
 				}
+				// Stream to Kafka in real-time
+				if kafkaProducer != nil {
+					if writeErr := kafkaProducer.Produce(ctx, ev); writeErr != nil {
+						if kafkaProducer.ErrorCount() == 1 {
+							// Log the first error only (avoid flooding)
+							fmt.Printf("\n       %s└─ ⚠ Kafka write error: %s%s", Red, writeErr.Error(), Reset)
+						}
+					}
+				}
 			}
 		case <-ctx.Done():
 			fmt.Println()
@@ -291,6 +321,11 @@ func Run(ctx context.Context, cfg *config.Config) (*DetonationResult, error) {
 		}
 	}
 	fmt.Printf("\r       %s└─ ⏱  Detonation window: %sCOMPLETE%s  [%d syscalls captured]        \n", Yellow, Green+Bold, Reset, len(result.SyscallEvents))
+	if kafkaProducer != nil && kafkaProducer.ErrorCount() > 0 {
+		fmt.Printf("       %s└─ ⚠ Kafka: %d/%d events failed to stream%s\n", Red, kafkaProducer.ErrorCount(), len(result.SyscallEvents), Reset)
+	} else if kafkaProducer != nil {
+		fmt.Printf("       %s└─ Kafka: %d events streamed successfully%s\n", Green, len(result.SyscallEvents), Reset)
+	}
 
 	// Step 6: Capture logs
 	step(6, totalSteps, "Capturing forensic logs...")

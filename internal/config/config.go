@@ -19,6 +19,9 @@ type Config struct {
 	PyPIImage         string
 	MemoryLimitMB     int64
 	PidsLimit         int64
+	KafkaBroker       string
+	KafkaTopic        string
+	LocalPackage      string // Path to a local .tgz package to detonate
 }
 
 // DefaultConfig returns sane defaults for a detonation run.
@@ -30,6 +33,8 @@ func DefaultConfig() *Config {
 		PyPIImage:         "python:3.12-alpine",
 		MemoryLimitMB:     256,
 		PidsLimit:         100,
+		KafkaBroker:       "localhost:9092",
+		KafkaTopic:        "syscall-telemetry",
 	}
 }
 
@@ -43,6 +48,9 @@ func (c *Config) Image() string {
 
 // InstallCommand returns the package install command for the configured registry.
 func (c *Config) InstallCommand() string {
+	if c.LocalPackage != "" {
+		return "npm install /pkg/package.tgz"
+	}
 	switch c.Registry {
 	case PyPI:
 		return "pip install " + c.PackageName

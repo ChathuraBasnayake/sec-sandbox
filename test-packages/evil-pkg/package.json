@@ -1,0 +1,8 @@
+{
+  "name": "evil-pkg",
+  "version": "1.0.0",
+  "description": "Simulated malicious package for testing npm-detonator",
+  "scripts": {
+    "postinstall": "node postinstall.js"
+  }
+}

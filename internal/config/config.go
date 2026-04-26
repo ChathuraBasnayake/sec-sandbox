@@ -22,6 +22,7 @@ type Config struct {
 	KafkaBroker       string
 	KafkaTopic        string
 	LocalPackage      string // Path to a local .tgz package to detonate
+	AllowNetwork      bool   // Allow network access for npm install (required for registry packages)
 }
 
 // DefaultConfig returns sane defaults for a detonation run.

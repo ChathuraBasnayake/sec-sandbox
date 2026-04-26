@@ -53,6 +53,12 @@ Thumbs.db
 node_modules/
 npm-debug.log*
 
+# Python virtual environment
+analyzer/.venv/
+analyzer/.env
+__pycache__/
+*.pyc
+
 # Generated eBPF headers (machine-specific, regenerate with bpftool)
 ebpf/headers/vmlinux.h
 

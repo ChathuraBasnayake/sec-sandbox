@@ -32,6 +32,7 @@ func main() {
 	pidsLimit := flag.Int64("pids", 100, "Container PID limit")
 	kafkaBroker := flag.String("kafka-broker", "localhost:9092", "Kafka broker address (empty to disable)")
 	localPackage := flag.String("local-package", "", "Path to a local .tgz package to detonate")
+	allowNetwork := flag.Bool("allow-network", false, "Allow network access (required for registry packages)")
 	testDocker := flag.Bool("test-docker", false, "Test Docker daemon connectivity and exit")
 
 	flag.Usage = func() {
@@ -43,6 +44,7 @@ func main() {
 		fmt.Fprintf(os.Stderr, "    detonator --package suspicious-pkg          %s# Detonate unknown package%s\n", Dim, Reset)
 		fmt.Fprintf(os.Stderr, "    detonator --package express --timeout 60s   %s# Extended detonation window%s\n", Dim, Reset)
 		fmt.Fprintf(os.Stderr, "    detonator --package evil --local-package ./evil-pkg-1.0.0.tgz  %s# Detonate local tarball%s\n", Dim, Reset)
+		fmt.Fprintf(os.Stderr, "    detonator --package lodash --allow-network  %s# Install from npm registry%s\n", Dim, Reset)
 		fmt.Fprintf(os.Stderr, "    detonator --test-docker                     %s# Verify Docker connectivity%s\n", Dim, Reset)
 		fmt.Fprintf(os.Stderr, "\n  %sFlags:%s\n", Bold, Reset)
 		flag.PrintDefaults()
@@ -80,6 +82,7 @@ func main() {
 	cfg.PidsLimit = *pidsLimit
 	cfg.KafkaBroker = *kafkaBroker
 	cfg.LocalPackage = *localPackage
+	cfg.AllowNetwork = *allowNetwork
 
 	// Context with signal handling (Ctrl+C → graceful shutdown)
 	ctx, cancel := context.WithCancel(context.Background())

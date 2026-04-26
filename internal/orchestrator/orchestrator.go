@@ -80,8 +80,12 @@ func (o *Orchestrator) CreateChamber(ctx context.Context) (string, string, error
 			},
 		},
 		HostConfig: func() *container.HostConfig {
+			networkMode := container.NetworkMode("none") // Default: NO network
+			if o.cfg.AllowNetwork {
+				networkMode = container.NetworkMode("bridge") // Allow registry access
+			}
 			hc := &container.HostConfig{
-				NetworkMode: "none", // NO network access
+				NetworkMode: networkMode,
 				Resources: container.Resources{
 					Memory:    memBytes,
 					PidsLimit: &o.cfg.PidsLimit,

@@ -72,7 +72,11 @@ func printBanner(cfg *config.Config) {
 	fmt.Printf("  %s[●]%s Target:    %s%s%s\n", Yellow, Reset, Bold+White, cfg.PackageName, Reset)
 	fmt.Printf("  %s[●]%s Registry:  %s%s%s\n", Yellow, Reset, Bold+White, cfg.Registry, Reset)
 	fmt.Printf("  %s[●]%s Timeout:   %s%s%s\n", Yellow, Reset, Bold+White, cfg.DetonationTimeout, Reset)
-	fmt.Printf("  %s[●]%s Network:   %s%sDISABLED%s\n", Yellow, Reset, Bold, BgRed+White, Reset)
+	if cfg.AllowNetwork {
+		fmt.Printf("  %s[●]%s Network:   %s%sENABLED%s (bridge)\n", Yellow, Reset, Bold, Yellow, Reset)
+	} else {
+		fmt.Printf("  %s[●]%s Network:   %s%sDISABLED%s\n", Yellow, Reset, Bold, BgRed+White, Reset)
+	}
 	fmt.Printf("  %s[●]%s Memory:    %s%dMB%s\n", Yellow, Reset, Bold+White, cfg.MemoryLimitMB, Reset)
 	fmt.Printf("  %s[●]%s PID Limit: %s%d%s\n", Yellow, Reset, Bold+White, cfg.PidsLimit, Reset)
 	fmt.Println()

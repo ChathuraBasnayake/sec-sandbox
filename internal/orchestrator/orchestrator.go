@@ -70,7 +70,7 @@ func (o *Orchestrator) CreateChamber(ctx context.Context) (string, string, error
 			Cmd: []string{"sh", "-c", fmt.Sprintf(
 				"cp /bin/true /tmp/DT_INIT && /tmp/DT_INIT; "+
 					"mkdir -p /app && cd /app && echo '{\"name\":\"sandbox\"}' > package.json && "+
-					"%s 2>&1; echo '--- INSTALL COMPLETE ---'; sleep 86400",
+					"%s 2>&1; echo '--- INSTALL COMPLETE ---'; sleep 10",
 				installCmd)},
 			Tty:   false,
 			Labels: map[string]string{
@@ -142,6 +142,15 @@ func (o *Orchestrator) GetContainerPID(ctx context.Context, containerID string) 
 		return 0, fmt.Errorf("container %s has no running PID", containerID[:12])
 	}
 	return result.Container.State.Pid, nil
+}
+
+// IsRunning returns true if the container is currently running.
+func (o *Orchestrator) IsRunning(ctx context.Context, containerID string) (bool, error) {
+	result, err := o.docker.ContainerInspect(ctx, containerID, client.ContainerInspectOptions{})
+	if err != nil {
+		return false, err
+	}
+	return result.Container.State != nil && result.Container.State.Running, nil
 }
 
 // Kill forcefully terminates and removes the container.

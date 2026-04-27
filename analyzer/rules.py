@@ -2,6 +2,7 @@
 
 Fast, deterministic scoring of syscall events using weighted indicators.
 Skips the LLM for obvious SAFE (≤10) and MALICIOUS (≥60) verdicts.
+Each rule maps to a MITRE ATT&CK technique for standardized reporting.
 """
 
 from .models import (
@@ -10,41 +11,87 @@ from .models import (
 )
 
 # ──────────────────────────────────────────────────────────────
-# Threat indicator rules: (pattern, points, severity, category, description)
+# Threat indicator rules: (pattern, points, severity, category, description, mitre_id, mitre_name)
 # ──────────────────────────────────────────────────────────────
 
 FILE_READ_RULES = [
     # CRITICAL — credential theft
-    ("/etc/shadow",          30, Severity.CRITICAL, Category.CREDENTIAL_THEFT,    "Read /etc/shadow (password hashes)"),
-    ("/.ssh/id_rsa",         25, Severity.CRITICAL, Category.CREDENTIAL_THEFT,    "Read SSH private key"),
-    ("/.ssh/id_ed25519",     25, Severity.CRITICAL, Category.CREDENTIAL_THEFT,    "Read SSH private key (ed25519)"),
-    ("/.ssh/authorized_keys",20, Severity.HIGH,     Category.CREDENTIAL_THEFT,    "Read SSH authorized_keys"),
+    ("/etc/shadow",          30, Severity.CRITICAL, Category.CREDENTIAL_THEFT,
+     "Read /etc/shadow (password hashes)",
+     "T1003.008", "OS Credential Dumping: /etc/shadow"),
+    ("/.ssh/id_rsa",         25, Severity.CRITICAL, Category.CREDENTIAL_THEFT,
+     "Read SSH private key",
+     "T1552.004", "Unsecured Credentials: Private Keys"),
+    ("/.ssh/id_ed25519",     25, Severity.CRITICAL, Category.CREDENTIAL_THEFT,
+     "Read SSH private key (ed25519)",
+     "T1552.004", "Unsecured Credentials: Private Keys"),
+    ("/.ssh/authorized_keys",20, Severity.HIGH,     Category.CREDENTIAL_THEFT,
+     "Read SSH authorized_keys",
+     "T1098.004", "Account Manipulation: SSH Authorized Keys"),
     # HIGH — sensitive data
-    ("/proc/self/environ",   15, Severity.HIGH,     Category.RECON,               "Read process environment variables (may contain secrets)"),
-    ("/.bash_history",       15, Severity.HIGH,     Category.CREDENTIAL_THEFT,    "Read shell command history"),
-    ("/.npmrc",              10, Severity.MEDIUM,   Category.CREDENTIAL_THEFT,    "Read .npmrc (may contain auth tokens)"),
-    ("/.gitconfig",          10, Severity.MEDIUM,   Category.CREDENTIAL_THEFT,    "Read git configuration"),
+    ("/proc/self/environ",   15, Severity.HIGH,     Category.RECON,
+     "Read process environment variables (may contain secrets)",
+     "T1082", "System Information Discovery"),
+    ("/.bash_history",       15, Severity.HIGH,     Category.CREDENTIAL_THEFT,
+     "Read shell command history",
+     "T1552.003", "Unsecured Credentials: Bash History"),
+    ("/.npmrc",              10, Severity.MEDIUM,   Category.CREDENTIAL_THEFT,
+     "Read .npmrc (may contain auth tokens)",
+     "T1552.001", "Unsecured Credentials: Credentials in Files"),
+    ("/.gitconfig",          10, Severity.MEDIUM,   Category.CREDENTIAL_THEFT,
+     "Read git configuration",
+     "T1552.001", "Unsecured Credentials: Credentials in Files"),
     # HIGH — persistence
-    ("/etc/crontab",         25, Severity.HIGH,     Category.PERSISTENCE,         "Accessed /etc/crontab (persistence mechanism)"),
-    ("/etc/passwd",           5, Severity.LOW,      Category.RECON,               "Read /etc/passwd (user enumeration)"),
+    ("/etc/crontab",         25, Severity.HIGH,     Category.PERSISTENCE,
+     "Accessed /etc/crontab (persistence mechanism)",
+     "T1053.003", "Scheduled Task/Job: Cron"),
+    ("/etc/passwd",           5, Severity.LOW,      Category.RECON,
+     "Read /etc/passwd (user enumeration)",
+     "T1087.001", "Account Discovery: Local Account"),
 ]
 
 EXEC_RULES = [
     # HIGH — shell commands used by attackers
-    ("curl",    20, Severity.HIGH,   Category.DATA_EXFILTRATION, "Executed curl (potential data exfiltration)"),
-    ("wget",    20, Severity.HIGH,   Category.DATA_EXFILTRATION, "Executed wget (potential payload download)"),
-    ("whoami",  10, Severity.MEDIUM, Category.RECON,             "Executed whoami (reconnaissance)"),
-    ("id",      10, Severity.MEDIUM, Category.RECON,             "Executed id (privilege reconnaissance)"),
-    ("uname",    5, Severity.LOW,    Category.RECON,             "Executed uname (system reconnaissance)"),
-    ("chmod",   10, Severity.MEDIUM, Category.PERSISTENCE,       "Executed chmod (changed file permissions)"),
-    ("chown",   10, Severity.MEDIUM, Category.PERSISTENCE,       "Executed chown (changed file ownership)"),
+    ("curl",    20, Severity.HIGH,   Category.DATA_EXFILTRATION,
+     "Executed curl (potential data exfiltration)",
+     "T1105", "Ingress Tool Transfer"),
+    ("wget",    20, Severity.HIGH,   Category.DATA_EXFILTRATION,
+     "Executed wget (potential payload download)",
+     "T1105", "Ingress Tool Transfer"),
+    ("whoami",  10, Severity.MEDIUM, Category.RECON,
+     "Executed whoami (reconnaissance)",
+     "T1033", "System Owner/User Discovery"),
+    ("id",      10, Severity.MEDIUM, Category.RECON,
+     "Executed id (privilege reconnaissance)",
+     "T1033", "System Owner/User Discovery"),
+    ("uname",    5, Severity.LOW,    Category.RECON,
+     "Executed uname (system reconnaissance)",
+     "T1082", "System Information Discovery"),
+    ("chmod",   10, Severity.MEDIUM, Category.PERSISTENCE,
+     "Executed chmod (changed file permissions)",
+     "T1222.002", "Linux File and Directory Permissions Modification"),
+    ("chown",   10, Severity.MEDIUM, Category.PERSISTENCE,
+     "Executed chown (changed file ownership)",
+     "T1222.002", "Linux File and Directory Permissions Modification"),
     # CRITICAL — reverse shell indicators
-    ("nc",      25, Severity.CRITICAL, Category.REVERSE_SHELL,   "Executed netcat (potential reverse shell)"),
-    ("ncat",    25, Severity.CRITICAL, Category.REVERSE_SHELL,   "Executed ncat (potential reverse shell)"),
-    ("socat",   25, Severity.CRITICAL, Category.REVERSE_SHELL,   "Executed socat (potential reverse shell)"),
-    ("python",  15, Severity.MEDIUM,   Category.SUSPICIOUS_ACTIVITY, "Spawned Python interpreter"),
-    ("perl",    15, Severity.MEDIUM,   Category.SUSPICIOUS_ACTIVITY, "Spawned Perl interpreter"),
-    ("ruby",    15, Severity.MEDIUM,   Category.SUSPICIOUS_ACTIVITY, "Spawned Ruby interpreter"),
+    ("nc",      25, Severity.CRITICAL, Category.REVERSE_SHELL,
+     "Executed netcat (potential reverse shell)",
+     "T1059.004", "Command and Scripting Interpreter: Unix Shell"),
+    ("ncat",    25, Severity.CRITICAL, Category.REVERSE_SHELL,
+     "Executed ncat (potential reverse shell)",
+     "T1059.004", "Command and Scripting Interpreter: Unix Shell"),
+    ("socat",   25, Severity.CRITICAL, Category.REVERSE_SHELL,
+     "Executed socat (potential reverse shell)",
+     "T1059.004", "Command and Scripting Interpreter: Unix Shell"),
+    ("python",  15, Severity.MEDIUM,   Category.SUSPICIOUS_ACTIVITY,
+     "Spawned Python interpreter",
+     "T1059.006", "Command and Scripting Interpreter: Python"),
+    ("perl",    15, Severity.MEDIUM,   Category.SUSPICIOUS_ACTIVITY,
+     "Spawned Perl interpreter",
+     "T1059", "Command and Scripting Interpreter"),
+    ("ruby",    15, Severity.MEDIUM,   Category.SUSPICIOUS_ACTIVITY,
+     "Spawned Ruby interpreter",
+     "T1059", "Command and Scripting Interpreter"),
 ]
 
 # Processes that are expected during normal npm install
@@ -85,7 +132,7 @@ def analyze(events: list[SyscallEvent], package_name: str, detonation_id: str) -
             filename = event.filename.strip()
             
             # Check exec rules
-            for pattern, points, severity, category, desc in EXEC_RULES:
+            for pattern, points, severity, category, desc, mitre_id, mitre_name in EXEC_RULES:
                 basename = filename.rsplit("/", 1)[-1] if "/" in filename else filename
                 if pattern == basename or pattern == proc_name:
                     key = f"exec:{pattern}"
@@ -97,6 +144,8 @@ def analyze(events: list[SyscallEvent], package_name: str, detonation_id: str) -
                             category=category,
                             description=desc,
                             evidence=f"execve: {proc_name} → {filename} (PID={event.pid})",
+                            mitre_id=mitre_id,
+                            mitre_name=mitre_name,
                         ))
             
             # Track non-standard process spawns
@@ -112,8 +161,14 @@ def analyze(events: list[SyscallEvent], package_name: str, detonation_id: str) -
                 continue
             
             # Check file read rules
-            for pattern, points, severity, category, desc in FILE_READ_RULES:
+            for pattern, points, severity, category, desc, mitre_id, mitre_name in FILE_READ_RULES:
                 if pattern in filename:
+                    # Exemption: npm and node natively read .npmrc during install
+                    if pattern == "/.npmrc":
+                        proc = event.process_name.strip()
+                        if proc in ("npm", "node", "libuv-worker") or proc.startswith("npm install"):
+                            continue
+
                     key = f"file:{pattern}"
                     if key not in seen_findings:
                         seen_findings.add(key)
@@ -123,6 +178,8 @@ def analyze(events: list[SyscallEvent], package_name: str, detonation_id: str) -
                             category=category,
                             description=desc,
                             evidence=f"openat: {event.process_name} → {filename} (PID={event.pid})",
+                            mitre_id=mitre_id,
+                            mitre_name=mitre_name,
                         ))
     
         elif event.event_type == "CONNECT":
@@ -152,6 +209,8 @@ def analyze(events: list[SyscallEvent], package_name: str, detonation_id: str) -
                         category=Category.ANTI_FORENSICS,
                         description=f"Deleted file: {filename}",
                         evidence=f"unlinkat: {event.process_name} deleted {filename} (PID={event.pid})",
+                        mitre_id="T1070.004",
+                        mitre_name="Indicator Removal: File Deletion",
                     ))
     
     # Bonus: excessive exec calls indicate scripted attack behavior
@@ -165,6 +224,8 @@ def analyze(events: list[SyscallEvent], package_name: str, detonation_id: str) -
             category=Category.SUSPICIOUS_ACTIVITY,
             description=f"Unusually high process spawning: {execve_count} execve calls ({extra} more than expected)",
             evidence=f"Non-standard processes: {', '.join(sorted(suspicious_execs)) or 'none identified'}",
+            mitre_id="T1106",
+            mitre_name="Native API",
         ))
     
     # Score suspicious outbound connections
@@ -180,6 +241,8 @@ def analyze(events: list[SyscallEvent], package_name: str, detonation_id: str) -
                 category=Category.NETWORK,
                 description=f"Outbound connection to {ip}:{port}",
                 evidence=f"connect: → {ip}:{port}",
+                mitre_id="T1071.001",
+                mitre_name="Application Layer Protocol: Web Protocols",
             ))
     
     # Cap score at 100

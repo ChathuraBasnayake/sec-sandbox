@@ -1,0 +1,665 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NPM Detonator — AI Threat Analysis</title>
+    <!-- Modern font -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg-color: #0d1117;
+            --bg-secondary: #161b22;
+            --bg-tertiary: #21262d;
+            --border-color: #30363d;
+            --text-main: #c9d1d9;
+            --text-muted: #8b949e;
+            
+            --color-safe: #238636;
+            --color-suspicious: #d29922;
+            --color-malicious: #da3633;
+            --color-info: #58a6ff;
+            
+            --font-sans: 'Inter', -apple-system, sans-serif;
+            --font-mono: 'JetBrains Mono', monospace;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            background-color: var(--bg-color);
+            color: var(--text-main);
+            font-family: var(--font-sans);
+            line-height: 1.5;
+            -webkit-font-smoothing: antialiased;
+        }
+
+        header {
+            background-color: var(--bg-secondary);
+            border-bottom: 1px solid var(--border-color);
+            padding: 1.5rem 2rem;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            position: sticky;
+            top: 0;
+            z-index: 10;
+        }
+
+        .logo {
+            font-weight: 800;
+            font-size: 1.25rem;
+            color: #fff;
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+        }
+
+        .logo span {
+            color: var(--color-malicious);
+        }
+
+        main {
+            display: grid;
+            grid-template-columns: 350px 1fr;
+            min-height: calc(100vh - 73px);
+        }
+
+        /* Sidebar - Report List */
+        .sidebar {
+            background-color: var(--bg-secondary);
+            border-right: 1px solid var(--border-color);
+            overflow-y: auto;
+            height: calc(100vh - 73px);
+        }
+
+        .report-item {
+            padding: 1.25rem;
+            border-bottom: 1px solid var(--border-color);
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+
+        .report-item:hover, .report-item.active {
+            background-color: var(--bg-tertiary);
+        }
+
+        .report-item.active {
+            border-left: 3px solid var(--color-info);
+        }
+
+        .report-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            margin-bottom: 0.5rem;
+        }
+
+        .pkg-name {
+            font-weight: 600;
+            font-size: 1.1rem;
+            color: #fff;
+        }
+
+        .badge {
+            font-size: 0.75rem;
+            font-weight: 700;
+            padding: 0.15rem 0.5rem;
+            border-radius: 12px;
+            text-transform: uppercase;
+        }
+        .badge.safe { background-color: rgba(35, 134, 54, 0.2); color: #3fb950; border: 1px solid rgba(63, 185, 80, 0.3); }
+        .badge.suspicious { background-color: rgba(210, 153, 34, 0.2); color: #d29922; border: 1px solid rgba(210, 153, 34, 0.3); }
+        .badge.malicious { background-color: rgba(218, 54, 51, 0.2); color: #ff7b72; border: 1px solid rgba(255, 123, 114, 0.3); }
+
+        .report-meta {
+            font-size: 0.85rem;
+            color: var(--text-muted);
+            display: flex;
+            flex-direction: column;
+            gap: 0.25rem;
+        }
+
+        /* Detail View */
+        .detail-view {
+            padding: 3rem;
+            overflow-y: auto;
+            height: calc(100vh - 73px);
+        }
+
+        .empty-state {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100%;
+            color: var(--text-muted);
+            text-align: center;
+        }
+
+        .empty-state svg {
+            width: 64px;
+            height: 64px;
+            margin-bottom: 1rem;
+            opacity: 0.5;
+        }
+
+        /* Report Content */
+        .report-content {
+            max-width: 1000px;
+            margin: 0 auto;
+            display: none;
+            animation: fadeIn 0.3s ease-in-out;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        .header-card {
+            background-color: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            padding: 2rem;
+            margin-bottom: 2rem;
+        }
+
+        .header-top {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 1.5rem;
+        }
+
+        .title-area h1 {
+            font-size: 2rem;
+            color: #fff;
+            margin-bottom: 0.25rem;
+        }
+        
+        .title-area .det-id {
+            font-family: var(--font-mono);
+            font-size: 0.85rem;
+            color: var(--text-muted);
+        }
+
+        /* Score Meter */
+        .score-meter {
+            display: flex;
+            align-items: center;
+            gap: 1.5rem;
+            margin-top: 2rem;
+            padding-top: 2rem;
+            border-top: 1px solid var(--border-color);
+        }
+
+        .score-circle {
+            position: relative;
+            width: 100px;
+            height: 100px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: conic-gradient(var(--bg-tertiary) 100%, transparent 0);
+        }
+
+        .score-circle::before {
+            content: "";
+            position: absolute;
+            inset: 8px;
+            background-color: var(--bg-secondary);
+            border-radius: 50%;
+        }
+
+        .score-value {
+            position: relative;
+            font-size: 2rem;
+            font-weight: 800;
+        }
+
+        .score-text h3 { margin-bottom: 0.25rem; color: #fff; }
+        .score-text p { color: var(--text-muted); font-size: 0.9rem; }
+
+        /* Stats Grid */
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(5, 1fr);
+            gap: 1rem;
+            margin-bottom: 2rem;
+        }
+
+        .stat-card {
+            background-color: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            padding: 1.25rem;
+            text-align: center;
+        }
+
+        .stat-card .label {
+            font-size: 0.8rem;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            margin-bottom: 0.5rem;
+        }
+
+        .stat-card .value {
+            font-size: 1.5rem;
+            font-weight: 700;
+            font-family: var(--font-mono);
+            color: #fff;
+        }
+
+        /* Narrative Section */
+        .narrative-card {
+            background: linear-gradient(145deg, var(--bg-secondary) 0%, rgba(218, 54, 51, 0.05) 100%);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            padding: 2rem;
+            margin-bottom: 2rem;
+            border-top: 3px solid var(--color-malicious);
+        }
+
+        .narrative-card h2 {
+            font-size: 1.25rem;
+            color: #fff;
+            margin-bottom: 1rem;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .summary-text {
+            font-size: 1.05rem;
+            margin-bottom: 1.5rem;
+            line-height: 1.6;
+            color: #e6edf3;
+        }
+
+        .attack-chain {
+            list-style: none;
+            position: relative;
+            padding-left: 1.5rem;
+        }
+
+        .attack-chain::before {
+            content: '';
+            position: absolute;
+            left: 0;
+            top: 10px;
+            bottom: 10px;
+            width: 2px;
+            background-color: var(--border-color);
+        }
+
+        .chain-step {
+            position: relative;
+            padding-bottom: 1.5rem;
+        }
+
+        .chain-step:last-child { padding-bottom: 0; }
+
+        .chain-step::before {
+            content: '';
+            position: absolute;
+            left: -1.5rem;
+            top: 6px;
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            background-color: var(--color-malicious);
+            transform: translateX(-4px);
+        }
+
+        /* Findings List */
+        .findings-list {
+            display: flex;
+            flex-direction: column;
+            gap: 1rem;
+        }
+
+        .finding-card {
+            background-color: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+            border-left: 4px solid var(--border-color);
+            border-radius: 8px;
+            padding: 1.5rem;
+        }
+
+        .finding-card.critical { border-left-color: var(--color-malicious); }
+        .finding-card.high { border-left-color: #f85149; }
+        .finding-card.medium { border-left-color: var(--color-suspicious); }
+        .finding-card.low { border-left-color: var(--color-info); }
+
+        .finding-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            margin-bottom: 1rem;
+        }
+
+        .finding-title {
+            font-weight: 600;
+            font-size: 1.1rem;
+            color: #fff;
+        }
+
+        .mitre-tag {
+            font-family: var(--font-mono);
+            font-size: 0.8rem;
+            background-color: var(--bg-tertiary);
+            padding: 0.25rem 0.5rem;
+            border-radius: 4px;
+            color: var(--text-muted);
+            border: 1px solid var(--border-color);
+            margin-top: 0.5rem;
+            display: inline-block;
+        }
+
+        .evidence-box {
+            background-color: var(--bg-color);
+            padding: 1rem;
+            border-radius: 6px;
+            font-family: var(--font-mono);
+            font-size: 0.85rem;
+            color: #8b949e;
+            border: 1px solid var(--border-color);
+            overflow-x: auto;
+        }
+
+        .recommendation {
+            margin-top: 2rem;
+            padding: 1.5rem;
+            border-radius: 8px;
+            background-color: rgba(218, 54, 51, 0.1);
+            border: 1px solid rgba(218, 54, 51, 0.2);
+            font-weight: 600;
+        }
+        .recommendation.safe {
+            background-color: rgba(35, 134, 54, 0.1);
+            border-color: rgba(35, 134, 54, 0.2);
+        }
+
+    </style>
+</head>
+<body>
+    <header>
+        <div class="logo">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path>
+                <path d="m9 12 2 2 4-4"></path>
+            </svg>
+            NPM Detonator <span>Dashboard</span>
+        </div>
+        <div style="font-size: 0.9rem; color: var(--text-muted);">
+            Real-time Threat Intelligence
+        </div>
+    </header>
+
+    <main>
+        <aside class="sidebar" id="reportList">
+            <!-- Populated by JS -->
+            <div style="padding: 2rem; text-align: center; color: var(--text-muted);">Loading reports...</div>
+        </aside>
+
+        <section class="detail-view">
+            <div id="emptyState" class="empty-state">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
+                    <line x1="3" y1="9" x2="21" y2="9"></line>
+                    <line x1="9" y1="21" x2="9" y2="9"></line>
+                </svg>
+                <h2>Select a report to view details</h2>
+                <p>Reports are generated automatically upon package detonation.</p>
+            </div>
+
+            <div id="reportContent" class="report-content">
+                <!-- Header -->
+                <div class="header-card">
+                    <div class="header-top">
+                        <div class="title-area">
+                            <h1 id="pkgName">package-name</h1>
+                            <div class="det-id" id="detId">det-2026-...</div>
+                        </div>
+                        <div id="riskBadge" class="badge">RISK LEVEL</div>
+                    </div>
+                    
+                    <div class="score-meter">
+                        <div class="score-circle" id="scoreCircle">
+                            <span class="score-value" id="scoreValue">0</span>
+                        </div>
+                        <div class="score-text">
+                            <h3>Threat Score</h3>
+                            <p>Analyzed via <span id="analysisMethod" style="color: #fff">rules + LLM</span></p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Syscall Stats -->
+                <h3 style="margin-bottom: 1rem; color: #fff;">Telemetry Overview</h3>
+                <div class="stats-grid">
+                    <div class="stat-card">
+                        <div class="label">Total Events</div>
+                        <div class="value" id="statTotal">0</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="label">EXECVE</div>
+                        <div class="value" id="statExec">0</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="label">OPENAT</div>
+                        <div class="value" id="statOpen">0</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="label">WRITE</div>
+                        <div class="value" id="statWrite">0</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="label">CONNECT</div>
+                        <div class="value" id="statConn">0</div>
+                    </div>
+                </div>
+
+                <!-- LLM Narrative (Hidden if none) -->
+                <div id="narrativeSection" style="display: none;">
+                    <div class="narrative-card">
+                        <h2>
+                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
+                            Attack Chain Analysis
+                        </h2>
+                        <div class="summary-text" id="execSummary"></div>
+                        <ul class="attack-chain" id="attackChain"></ul>
+                    </div>
+                </div>
+
+                <!-- Findings List -->
+                <h3 style="margin-bottom: 1rem; color: #fff; display: flex; justify-content: space-between;">
+                    Security Findings
+                    <span id="findingsCount" class="badge" style="background: var(--bg-tertiary); color: #fff; border-color: var(--border-color)">0</span>
+                </h3>
+                <div class="findings-list" id="findingsList">
+                    <!-- Populated by JS -->
+                </div>
+
+                <div id="recommendationBlock" class="recommendation">
+                    <!-- Populated by JS -->
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <script>
+        // Fetch and render the list of reports
+        async function loadReports() {
+            try {
+                const res = await fetch('/api/reports');
+                const reports = await res.json();
+                
+                const listEl = document.getElementById('reportList');
+                if (!reports || reports.length === 0) {
+                    listEl.innerHTML = '<div style="padding: 2rem; text-align: center; color: var(--text-muted);">No reports found.<br>Run detonator to generate some.</div>';
+                    return;
+                }
+
+                listEl.innerHTML = '';
+                reports.forEach(r => {
+                    const item = document.createElement('div');
+                    item.className = 'report-item';
+                    item.id = `item-${r.id}`;
+                    item.onclick = () => loadReportDetail(r.id);
+                    
+                    const date = new Date(r.analyzed_at).toLocaleString();
+                    const riskClass = r.risk_level.toLowerCase();
+                    
+                    item.innerHTML = `
+                        <div class="report-header">
+                            <span class="pkg-name">${r.package_name}</span>
+                            <span class="badge ${riskClass}">${r.risk_level}</span>
+                        </div>
+                        <div class="report-meta">
+                            <span>Score: <strong>${r.threat_score}/100</strong></span>
+                            <span>${date}</span>
+                        </div>
+                    `;
+                    listEl.appendChild(item);
+                });
+            } catch (err) {
+                console.error(err);
+            }
+        }
+
+        // Fetch and render a specific report
+        async function loadReportDetail(id) {
+            // Update active state in sidebar
+            document.querySelectorAll('.report-item').forEach(el => el.classList.remove('active'));
+            document.getElementById(`item-${id}`).classList.add('active');
+
+            // Toggle view state
+            document.getElementById('emptyState').style.display = 'none';
+            const contentEl = document.getElementById('reportContent');
+            contentEl.style.display = 'none'; // reset animation
+            
+            try {
+                const res = await fetch(`/api/reports/${id}`);
+                const report = await res.json();
+                
+                // Header
+                document.getElementById('pkgName').textContent = report.package_name;
+                document.getElementById('detId').textContent = report.detonation_id;
+                
+                const badge = document.getElementById('riskBadge');
+                badge.textContent = report.risk_level;
+                badge.className = `badge ${report.risk_level.toLowerCase()}`;
+                
+                // Score Circle
+                const score = report.threat_score;
+                document.getElementById('scoreValue').textContent = score;
+                document.getElementById('scoreValue').style.color = 
+                    score >= 60 ? 'var(--color-malicious)' : 
+                    score >= 25 ? 'var(--color-suspicious)' : 'var(--color-safe)';
+                
+                const circleColor = 
+                    score >= 60 ? 'var(--color-malicious)' : 
+                    score >= 25 ? 'var(--color-suspicious)' : 'var(--color-safe)';
+                document.getElementById('scoreCircle').style.background = 
+                    `conic-gradient(${circleColor} ${score}%, var(--bg-tertiary) 0)`;
+                
+                document.getElementById('analysisMethod').textContent = report.analysis_method;
+
+                // Stats
+                document.getElementById('statTotal').textContent = report.events_analyzed.toLocaleString();
+                document.getElementById('statExec').textContent = report.execve_count.toLocaleString();
+                document.getElementById('statOpen').textContent = report.openat_count.toLocaleString();
+                document.getElementById('statWrite').textContent = report.write_count.toLocaleString();
+                document.getElementById('statConn').textContent = report.connect_count.toLocaleString();
+
+                // Narrative (Gemini/LLM Attack Chain)
+                const narrativeSec = document.getElementById('narrativeSection');
+                if (report.executive_summary && report.attack_chain && report.attack_chain.length > 0) {
+                    narrativeSec.style.display = 'block';
+                    document.getElementById('execSummary').textContent = report.executive_summary;
+                    
+                    const chainEl = document.getElementById('attackChain');
+                    chainEl.innerHTML = '';
+                    report.attack_chain.forEach(stage => {
+                        const li = document.createElement('li');
+                        li.className = 'chain-step';
+                        
+                        // Bold the "Stage X -" part
+                        const splitIdx = stage.indexOf(':');
+                        if (splitIdx > -1) {
+                            li.innerHTML = `<strong>${stage.substring(0, splitIdx + 1)}</strong> ${stage.substring(splitIdx + 1)}`;
+                        } else {
+                            li.textContent = stage;
+                        }
+                        
+                        chainEl.appendChild(li);
+                    });
+                } else {
+                    narrativeSec.style.display = 'none';
+                }
+
+                // Findings
+                const findingsList = document.getElementById('findingsList');
+                findingsList.innerHTML = '';
+                document.getElementById('findingsCount').textContent = report.findings.length;
+                
+                if (report.findings.length === 0) {
+                    findingsList.innerHTML = '<div class="finding-card"><div class="finding-title" style="color: var(--color-safe)">No suspicious behavior detected</div></div>';
+                } else {
+                    report.findings.forEach(f => {
+                        const card = document.createElement('div');
+                        card.className = `finding-card ${f.severity.toLowerCase()}`;
+                        
+                        const mitreHtml = f.mitre_id ? 
+                            `<div class="mitre-tag">${f.mitre_id}${f.mitre_name ? ' — ' + f.mitre_name : ''}</div>` : '';
+                        
+                        card.innerHTML = `
+                            <div class="finding-header">
+                                <div>
+                                    <div class="finding-title">${f.description}</div>
+                                    ${mitreHtml}
+                                </div>
+                                <span class="badge" style="background: var(--bg-tertiary); color: var(--text-muted); border: 1px solid var(--border-color)">
+                                    ${f.severity}
+                                </span>
+                            </div>
+                            <div class="evidence-box">> ${f.evidence}</div>
+                        `;
+                        findingsList.appendChild(card);
+                    });
+                }
+
+                // Recommendation
+                const recBlock = document.getElementById('recommendationBlock');
+                recBlock.textContent = report.recommendation;
+                if (report.risk_level === 'SAFE') {
+                    recBlock.className = 'recommendation safe';
+                } else {
+                    recBlock.className = 'recommendation';
+                }
+
+                // Show content with animation
+                setTimeout(() => {
+                    contentEl.style.display = 'block';
+                }, 10);
+
+            } catch (err) {
+                console.error("Failed to load report", err);
+            }
+        }
+
+        // Init
+        window.addEventListener('DOMContentLoaded', loadReports);
+    </script>
+</body>
+</html>

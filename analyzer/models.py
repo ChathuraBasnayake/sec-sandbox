@@ -36,6 +36,8 @@ class Finding(BaseModel):
     category: Category
     description: str
     evidence: str
+    mitre_id: str = ""      # MITRE ATT&CK technique ID (e.g., "T1552.004")
+    mitre_name: str = ""    # Human-readable technique name
 
 
 class ThreatVerdict(BaseModel):
@@ -54,6 +56,9 @@ class ThreatVerdict(BaseModel):
     connect_count: int = 0
     write_count: int = 0
     unlink_count: int = 0
+    # Gemini attack chain (populated for malicious packages)
+    executive_summary: str = ""
+    attack_chain: list[str] = []  # ["Stage 1: Recon — ...", "Stage 2: ..."]
 
 
 class SyscallEvent(BaseModel):

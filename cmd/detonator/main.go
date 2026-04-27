@@ -9,7 +9,9 @@ import (
 	"syscall"
 	"time"
 
+	"detonator/internal/batch"
 	"detonator/internal/config"
+	"detonator/internal/dashboard"
 	"detonator/internal/detonator"
 	"detonator/internal/orchestrator"
 )
@@ -34,6 +36,10 @@ func main() {
 	localPackage := flag.String("local-package", "", "Path to a local .tgz package to detonate")
 	allowNetwork := flag.Bool("allow-network", false, "Allow network access (required for registry packages)")
 	testDocker := flag.Bool("test-docker", false, "Test Docker daemon connectivity and exit")
+	runDashboard := flag.Bool("dashboard", false, "Start the web dashboard to view reports")
+	port := flag.Int("port", 8080, "Port to run the dashboard on")
+	lockfile := flag.String("lockfile", "", "Path to package-lock.json for batch scanning")
+	limit := flag.Int("limit", 0, "Max number of dependencies to detonate in batch mode (0 = unlimited)")
 
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, "\n  %s%s☢  NPM Supply Chain Detonation Sandbox%s\n\n", Bold, Red, Reset)
@@ -45,7 +51,9 @@ func main() {
 		fmt.Fprintf(os.Stderr, "    detonator --package express --timeout 60s   %s# Extended detonation window%s\n", Dim, Reset)
 		fmt.Fprintf(os.Stderr, "    detonator --package evil --local-package ./evil-pkg-1.0.0.tgz  %s# Detonate local tarball%s\n", Dim, Reset)
 		fmt.Fprintf(os.Stderr, "    detonator --package lodash --allow-network  %s# Install from npm registry%s\n", Dim, Reset)
+		fmt.Fprintf(os.Stderr, "    detonator --lockfile package-lock.json      %s# Batch scan all dependencies%s\n", Dim, Reset)
 		fmt.Fprintf(os.Stderr, "    detonator --test-docker                     %s# Verify Docker connectivity%s\n", Dim, Reset)
+		fmt.Fprintf(os.Stderr, "    detonator --dashboard --port 8080           %s# View threat reports UI%s\n", Dim, Reset)
 		fmt.Fprintf(os.Stderr, "\n  %sFlags:%s\n", Bold, Reset)
 		flag.PrintDefaults()
 		fmt.Fprintln(os.Stderr)
@@ -59,9 +67,19 @@ func main() {
 		return
 	}
 
-	// Validate required flags
-	if *packageName == "" {
-		fmt.Fprintf(os.Stderr, "\n  %s%s✗ Error:%s --package flag is required\n", Red, Bold, Reset)
+	// Handle dashboard mode
+	if *runDashboard {
+		srv := dashboard.New(*port)
+		if err := srv.Start(); err != nil {
+			fmt.Fprintf(os.Stderr, "\n  %s%s✗ Dashboard failed: %s%s\n\n", Red, Bold, err, Reset)
+			os.Exit(1)
+		}
+		return
+	}
+
+	// Validate required flags (package OR lockfile)
+	if *packageName == "" && *lockfile == "" {
+		fmt.Fprintf(os.Stderr, "\n  %s%s✗ Error:%s --package or --lockfile flag is required\n", Red, Bold, Reset)
 		fmt.Fprintf(os.Stderr, "  %sRun 'detonator --help' for usage info%s\n\n", Dim, Reset)
 		os.Exit(1)
 	}
@@ -83,6 +101,8 @@ func main() {
 	cfg.KafkaBroker = *kafkaBroker
 	cfg.LocalPackage = *localPackage
 	cfg.AllowNetwork = *allowNetwork
+	cfg.Lockfile = *lockfile
+	cfg.Limit = *limit
 
 	// Context with signal handling (Ctrl+C → graceful shutdown)
 	ctx, cancel := context.WithCancel(context.Background())
@@ -97,14 +117,21 @@ func main() {
 	}()
 
 	// Run detonation
-	result, err := detonator.Run(ctx, cfg)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "\n  %s%s✗ Detonation failed: %s%s\n\n", Red, Bold, err, Reset)
-		os.Exit(1)
-	}
+	if cfg.Lockfile != "" {
+		if err := batch.RunBatch(ctx, cfg); err != nil {
+			fmt.Fprintf(os.Stderr, "\n  %s%s✗ Batch failed: %s%s\n\n", Red, Bold, err, Reset)
+			os.Exit(1)
+		}
+	} else {
+		result, err := detonator.Run(ctx, cfg)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "\n  %s%s✗ Detonation failed: %s%s\n\n", Red, Bold, err, Reset)
+			os.Exit(1)
+		}
 
-	if !result.Success {
-		os.Exit(1)
+		if !result.Success {
+			os.Exit(1)
+		}
 	}
 }
 

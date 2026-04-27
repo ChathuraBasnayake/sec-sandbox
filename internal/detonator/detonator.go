@@ -320,12 +320,21 @@ func Run(ctx context.Context, cfg *config.Config) (*DetonationResult, error) {
 	defer ticker.Stop()
 	elapsed := time.Duration(0)
 
+	Loop:
 	for elapsed < timeout {
 		select {
 		case <-ticker.C:
 			elapsed += time.Second
 			remaining := timeout - elapsed
 			evtCount := len(result.SyscallEvents)
+			
+			// Dynamic Early-Exit: Check if container finished early (plus 10s buffer)
+			running, err := orch.IsRunning(ctx, containerID)
+			if err == nil && !running {
+				fmt.Printf("\r       %s└─ ⏱  Detonation window: %sEARLY EXIT%s (Container stopped naturally) [%d syscalls]   %s", Yellow, Green+Bold, Reset, evtCount, Reset)
+				break Loop
+			}
+			
 			fmt.Printf("\r       %s└─ ⏱  Detonation window: %s remaining  [%d syscalls captured]   %s", Yellow, remaining, evtCount, Reset)
 		case ev, ok := <-eventCh:
 			if ok {
